@@ -21,6 +21,7 @@ import ipaddress
 import argparse
 import logging
 import os
+import sys
 import dotenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,16 +34,23 @@ class CpanelApiError(RuntimeError):
     """Raised when cPanel UAPI returns an error payload."""
 
 
-def setup_logging() -> logging.Logger:
+def setup_logging(verbose: bool = False) -> logging.Logger:
     log_path = Path(__file__).with_name("update_a_record.log")
     logger = logging.getLogger("update_a_record")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
-    if not logger.handlers:
-        handler = logging.FileHandler(log_path, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        logger.addHandler(handler)
+    if not any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        logger.addHandler(file_handler)
+
+    if verbose and not any(isinstance(h, logging.StreamHandler) and h.stream is sys.stdout for h in logger.handlers):
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.DEBUG)
+        console_handler.setFormatter(logging.Formatter("[verbose] %(message)s"))
+        logger.addHandler(console_handler)
 
     return logger
 
@@ -99,14 +107,19 @@ def detect_public_ipv4(timeout: int) -> str:
     )
 
     last_error: Optional[Exception] = None
+    logger = logging.getLogger("update_a_record")
+
     for url in services:
+        logger.debug("Trying public IP detection endpoint: %s", url)
         try:
             response = requests.get(url, timeout=timeout)
             response.raise_for_status()
             candidate = response.text.strip()
             ipaddress.IPv4Address(candidate)
+            logger.debug("Public IPv4 detected via %s: %s", url, candidate)
             return candidate
         except (requests.RequestException, ValueError) as exc:
+            logger.debug("IP detection failed via %s: %s", url, exc)
             last_error = exc
 
     raise CpanelApiError(f"Unable to detect public IPv4 address: {last_error}")
@@ -121,7 +134,9 @@ def call_uapi(
     verify_ssl: bool,
     timeout: int,
 ) -> Dict[str, Any]:
+    logger = logging.getLogger("update_a_record")
     url = f"https://{host}:2083/execute/{module}/{function}"
+    logger.debug("Calling UAPI %s/%s with params: %s", module, function, params)
     resp = session.get(url, params=params, timeout=timeout, verify=verify_ssl)
     resp.raise_for_status()
 
@@ -148,6 +163,7 @@ def call_api2_zoneedit(
     verify_ssl: bool,
     timeout: int,
 ) -> Dict[str, Any]:
+    logger = logging.getLogger("update_a_record")
     url = f"https://{host}:2083/json-api/cpanel"
     query = {
         "cpanel_jsonapi_apiversion": 2,
@@ -156,6 +172,7 @@ def call_api2_zoneedit(
         "cpanel_jsonapi_func": function,
     }
     query.update(params)
+    logger.debug("Calling API2 ZoneEdit/%s with params: %s", function, params)
 
     resp = session.get(url, params=query, timeout=timeout, verify=verify_ssl)
     resp.raise_for_status()
@@ -187,7 +204,9 @@ def normalize_name(name: str) -> str:
 
 
 def pick_record(records: List[Dict[str, Any]], name: str, line: Optional[int]) -> Dict[str, Any]:
+    logger = logging.getLogger("update_a_record")
     if line is not None:
+        logger.debug("Selecting record by explicit line: %s", line)
         for rec in records:
             if int(rec.get("line", -1)) == line:
                 return rec
@@ -211,6 +230,7 @@ def pick_record(records: List[Dict[str, Any]], name: str, line: Optional[int]) -
             f"Matching lines: {lines}"
         )
 
+    logger.debug("Selected A record line=%s name=%s", candidates[0].get("line"), candidates[0].get("name"))
     return candidates[0]
 
 
@@ -222,6 +242,7 @@ def fetch_a_records(
     verify_ssl: bool,
     timeout: int,
 ) -> List[Dict[str, Any]]:
+    logger = logging.getLogger("update_a_record")
     try:
         payload = call_uapi(
             session=session,
@@ -236,10 +257,13 @@ def fetch_a_records(
         data = payload.get("data") or []
         if not isinstance(data, list):
             raise CpanelApiError(f"Unexpected fetch response format: {payload}")
+        logger.debug("Fetched %d A records via UAPI", len([r for r in data if str(r.get("type", "")).upper() == "A"]))
         return [r for r in data if str(r.get("type", "")).upper() == "A"]
     except CpanelApiError as exc:
         if not _error_mentions_missing_uapi_zoneedit(str(exc)):
             raise
+
+        logger.debug("UAPI ZoneEdit unavailable, falling back to API2")
 
         payload = call_api2_zoneedit(
             session=session,
@@ -251,6 +275,7 @@ def fetch_a_records(
             timeout=timeout,
         )
         data = payload.get("cpanelresult", {}).get("data") or []
+        logger.debug("Fetched %d A records via API2 fallback", len([r for r in data if str(r.get("type", "")).upper() == "A"]))
         return [r for r in data if str(r.get("type", "")).upper() == "A"]
 
 
@@ -265,6 +290,7 @@ def update_a_record(
     verify_ssl: bool,
     timeout: int,
 ) -> Dict[str, Any]:
+    logger = logging.getLogger("update_a_record")
     params: Dict[str, Any] = {
         "domain": domain,
         "line": record["line"],
@@ -277,6 +303,7 @@ def update_a_record(
             params[key] = record[key]
 
     params["ttl"] = ttl if ttl is not None else record.get("ttl", 14400)
+    logger.debug("Updating record line=%s to address=%s ttl=%s", record.get("line"), new_ip, params["ttl"])
 
     try:
         return call_uapi(
@@ -291,6 +318,7 @@ def update_a_record(
     except CpanelApiError as exc:
         if not _error_mentions_missing_uapi_zoneedit(str(exc)):
             raise
+        logger.debug("UAPI edit unavailable, falling back to API2")
         return call_api2_zoneedit(
             session=session,
             host=host,
@@ -330,6 +358,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timeout", type=int, default=30, help="HTTP timeout seconds")
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print verbose debug logs to terminal (not written to log file)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be changed but do not call edit_zone_record",
@@ -352,7 +385,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    logger = setup_logging(verbose=args.verbose)
     verify_ssl = not args.insecure
+    logger.debug("Starting update with host=%s domain=%s name=%s line=%s dry_run=%s", args.host, args.domain, args.name, args.line, args.dry_run)
     detected_ip = detect_public_ipv4(args.timeout)
 
     session = build_session(user=args.user, token=args.token)
@@ -383,9 +418,8 @@ def main() -> int:
             after["ttl"] = args.ttl
 
         if args.dry_run:
+            logger.debug("Dry-run mode enabled; skipping record update call")
             return 0
-
-        logger = setup_logging()
 
         update_a_record(
             session=session,
@@ -404,10 +438,10 @@ def main() -> int:
 
     except requests.HTTPError as exc:
         body = exc.response.text[:1000] if exc.response is not None else str(exc)
-        log_error(setup_logging(), f"HTTP error: {exc} | Response: {body}")
+        log_error(logger, f"HTTP error: {exc} | Response: {body}")
         return 2
     except (requests.RequestException, CpanelApiError, KeyError, ValueError) as exc:
-        log_error(setup_logging(), str(exc))
+        log_error(logger, str(exc))
         return 1
 
 
