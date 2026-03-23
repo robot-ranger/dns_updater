@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && rm -rf /root/.cache/pip \
+    && chmod +x /app/update_a_record.py
 
-CMD ["python"]
+CMD ["./update_a_record.py"]

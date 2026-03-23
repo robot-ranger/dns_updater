@@ -201,6 +201,17 @@ def normalize_name(name: str) -> str:
     return name.rstrip(".").lower()
 
 
+def normalize_config_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+        cleaned = cleaned[1:-1].strip()
+
+    return cleaned
+
+
 def pick_record(records: List[Dict[str, Any]], name: str, line: Optional[int]) -> Dict[str, Any]:
     logger = logging.getLogger("update_a_record")
     if line is not None:
@@ -374,6 +385,14 @@ def parse_args() -> argparse.Namespace:
         help="Show what would be changed but do not call edit_zone_record",
     )
     args = parser.parse_args()
+
+    # Docker --env-file keeps surrounding quotes as literal characters.
+    # Normalize common quoted values so both dotenv and Docker env-file work.
+    args.host = normalize_config_value(args.host)
+    args.user = normalize_config_value(args.user)
+    args.token = normalize_config_value(args.token)
+    args.domain = normalize_config_value(args.domain)
+    args.name = normalize_config_value(args.name)
 
     missing = [
         flag
