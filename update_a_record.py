@@ -56,21 +56,21 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
 
 
 def log_success(logger: logging.Logger, before: Dict[str, Any], after: Dict[str, Any]) -> None:
-    logger.info(
-        f"Success: Old: {{"
-        f"'line': {before.get('line')}, "
-        f"'name': {before.get('name')}, "
-        f"'type': {before.get('type')}, "
-        f"'address': {before.get('address')}, "
-        f"'ttl': {before.get('ttl')}"
-        f"}} New: {{"
-        f"'line': {after.get('line')}, "
-        f"'name': {after.get('name')}, "
-        f"'type': {after.get('type')}, "
-        f"'address': {after.get('address')}, "
-        f"'ttl': {after.get('ttl')}"
-        f"}}"
-    )
+    old_record = {
+        "line": before.get("line"),
+        "name": before.get("name"),
+        "type": before.get("type"),
+        "address": before.get("address"),
+        "ttl": before.get("ttl"),
+    }
+    new_record = {
+        "line": after.get("line"),
+        "name": after.get("name"),
+        "type": after.get("type"),
+        "address": after.get("address"),
+        "ttl": after.get("ttl"),
+    }
+    logger.info(f"Success: Old: {old_record} New: {new_record}")
 
 
 def log_error(logger: logging.Logger, message: str) -> None:
