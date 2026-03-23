@@ -57,26 +57,24 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
 
 def log_success(logger: logging.Logger, before: Dict[str, Any], after: Dict[str, Any]) -> None:
     logger.info(
-        "Success: Old: %s New: %s",
-        {
-            "line": before.get("line"),
-            "name": before.get("name"),
-            "type": before.get("type"),
-            "address": before.get("address"),
-            "ttl": before.get("ttl"),
-        },
-        {
-            "line": after.get("line"),
-            "name": after.get("name"),
-            "type": after.get("type"),
-            "address": after.get("address"),
-            "ttl": after.get("ttl"),
-        },
+        f"Success: Old: {{"
+        f"'line': {before.get('line')}, "
+        f"'name': {before.get('name')}, "
+        f"'type': {before.get('type')}, "
+        f"'address': {before.get('address')}, "
+        f"'ttl': {before.get('ttl')}"
+        f"}} New: {{"
+        f"'line': {after.get('line')}, "
+        f"'name': {after.get('name')}, "
+        f"'type': {after.get('type')}, "
+        f"'address': {after.get('address')}, "
+        f"'ttl': {after.get('ttl')}"
+        f"}}"
     )
 
 
 def log_error(logger: logging.Logger, message: str) -> None:
-    logger.error("Error: %s", message)
+    logger.error(f"Error: {message}")
 
 
 def _error_mentions_missing_uapi_zoneedit(message: str) -> bool:
@@ -110,16 +108,16 @@ def detect_public_ipv4(timeout: int) -> str:
     logger = logging.getLogger("update_a_record")
 
     for url in services:
-        logger.debug("Trying public IP detection endpoint: %s", url)
+        logger.debug(f"Trying public IP detection endpoint: {url}")
         try:
             response = requests.get(url, timeout=timeout)
             response.raise_for_status()
             candidate = response.text.strip()
             ipaddress.IPv4Address(candidate)
-            logger.debug("Public IPv4 detected via %s: %s", url, candidate)
+            logger.debug(f"Public IPv4 detected via {url}: {candidate}")
             return candidate
         except (requests.RequestException, ValueError) as exc:
-            logger.debug("IP detection failed via %s: %s", url, exc)
+            logger.debug(f"IP detection failed via {url}: {exc}")
             last_error = exc
 
     raise CpanelApiError(f"Unable to detect public IPv4 address: {last_error}")
@@ -136,7 +134,7 @@ def call_uapi(
 ) -> Dict[str, Any]:
     logger = logging.getLogger("update_a_record")
     url = f"https://{host}:2083/execute/{module}/{function}"
-    logger.debug("Calling UAPI %s/%s with params: %s", module, function, params)
+    logger.debug(f"Calling UAPI {module}/{function} with params: {params}")
     resp = session.get(url, params=params, timeout=timeout, verify=verify_ssl)
     resp.raise_for_status()
 
@@ -172,7 +170,7 @@ def call_api2_zoneedit(
         "cpanel_jsonapi_func": function,
     }
     query.update(params)
-    logger.debug("Calling API2 ZoneEdit/%s with params: %s", function, params)
+    logger.debug(f"Calling API2 ZoneEdit/{function} with params: {params}")
 
     resp = session.get(url, params=query, timeout=timeout, verify=verify_ssl)
     resp.raise_for_status()
@@ -206,7 +204,7 @@ def normalize_name(name: str) -> str:
 def pick_record(records: List[Dict[str, Any]], name: str, line: Optional[int]) -> Dict[str, Any]:
     logger = logging.getLogger("update_a_record")
     if line is not None:
-        logger.debug("Selecting record by explicit line: %s", line)
+        logger.debug(f"Selecting record by explicit line: {line}")
         for rec in records:
             if int(rec.get("line", -1)) == line:
                 return rec
@@ -230,7 +228,9 @@ def pick_record(records: List[Dict[str, Any]], name: str, line: Optional[int]) -
             f"Matching lines: {lines}"
         )
 
-    logger.debug("Selected A record line=%s name=%s", candidates[0].get("line"), candidates[0].get("name"))
+    logger.debug(
+        f"Selected A record line={candidates[0].get('line')} name={candidates[0].get('name')}"
+    )
     return candidates[0]
 
 
@@ -257,7 +257,9 @@ def fetch_a_records(
         data = payload.get("data") or []
         if not isinstance(data, list):
             raise CpanelApiError(f"Unexpected fetch response format: {payload}")
-        logger.debug("Fetched %d A records via UAPI", len([r for r in data if str(r.get("type", "")).upper() == "A"]))
+        logger.debug(
+            f"Fetched {len([r for r in data if str(r.get('type', '')).upper() == 'A'])} A records via UAPI"
+        )
         return [r for r in data if str(r.get("type", "")).upper() == "A"]
     except CpanelApiError as exc:
         if not _error_mentions_missing_uapi_zoneedit(str(exc)):
@@ -275,7 +277,9 @@ def fetch_a_records(
             timeout=timeout,
         )
         data = payload.get("cpanelresult", {}).get("data") or []
-        logger.debug("Fetched %d A records via API2 fallback", len([r for r in data if str(r.get("type", "")).upper() == "A"]))
+        logger.debug(
+            f"Fetched {len([r for r in data if str(r.get('type', '')).upper() == 'A'])} A records via API2 fallback"
+        )
         return [r for r in data if str(r.get("type", "")).upper() == "A"]
 
 
@@ -303,7 +307,9 @@ def update_a_record(
             params[key] = record[key]
 
     params["ttl"] = ttl if ttl is not None else record.get("ttl", 14400)
-    logger.debug("Updating record line=%s to address=%s ttl=%s", record.get("line"), new_ip, params["ttl"])
+    logger.debug(
+        f"Updating record line={record.get('line')} to address={new_ip} ttl={params['ttl']}"
+    )
 
     try:
         return call_uapi(
@@ -387,7 +393,10 @@ def main() -> int:
     args = parse_args()
     logger = setup_logging(verbose=args.verbose)
     verify_ssl = not args.insecure
-    logger.debug("Starting update with host=%s domain=%s name=%s line=%s dry_run=%s", args.host, args.domain, args.name, args.line, args.dry_run)
+    logger.debug(
+        f"Starting update with host={args.host} domain={args.domain} name={args.name} "
+        f"line={args.line} dry_run={args.dry_run}"
+    )
     detected_ip = detect_public_ipv4(args.timeout)
 
     session = build_session(user=args.user, token=args.token)
